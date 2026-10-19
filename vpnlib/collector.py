@@ -85,6 +85,15 @@ GEO_URLS = ["http://ip-api.com/json/?fields=status,country,countryCode,city,quer
             "http://ipinfo.io/json"]
 TARGET = 1000  # потолок списка: столько рабочих из РФ обычно не набирается, берём сколько есть
 MAX_PER_EXIT_IP = 2
+# страны с выходом «поближе» к России — у них ниже пинг для пользователей из РФ. Они идут в АВТО и в
+# подписку первыми: облако GitHub проверяет из США, и без этого в лучших оказались бы американские серверы
+NEAR_RU = set("AT BE BG CH CY CZ DE DK EE ES FI FR GB GR HR HU IE IS IT LT LU LV MD MT NL NO PL PT RO RS SE "
+              "SI SK AL BA ME MK UA BY TR GE AM AZ KZ UZ KG AE IL".split())
+IN_CLOUD = bool(os.environ.get("GITHUB_ACTIONS"))
+
+
+def near(s):
+    return (s.get("country_code") or "") in NEAR_RU
 SPEED_WORKERS = 32  # параллельных загрузок при проверке «качает / не качает»
 PRECISE_TOP = 120  # скольким лучшим серверам мерить скорость точно (1 МБ)
 ENDURANCE_TOP = 40  # скольких кандидатов в «⚡ АВТО» гонять длинной загрузкой (3 МБ)
@@ -393,6 +402,8 @@ def auto_pool(servers, size=30, for_chain=False, basic_only=False, prefer_stable
     prefer_stable — сначала те, что выдержали длинную загрузку (если таких набралось хотя бы 8)."""
     alive = [s for s in servers if s.get("ping") and s.get("country_code") != "RU" and not s.get("white")
              and not ((for_chain or basic_only) and s["proto"] == "hysteria2") and _robust(s)]
+    if sum(1 for s in alive if near(s)) >= 8:
+        alive = [s for s in alive if near(s)]
     if prefer_stable and sum(1 for s in alive if s.get("stable")) >= 8:
         alive = [s for s in alive if s.get("stable")]
     return sorted(alive, key=lambda s: (-(s.get("speed") or 0), s["ping"]))[:size]
@@ -475,13 +486,16 @@ def quick_check(log=print):
     with lock():
         xray.ensure_xray(log)  # в облаке ядра ещё нет — скачается при первом запуске (потом из кэша)
         servers = load()
-        for s in servers:
+        # из облака (США) многие серверы белых списков не отвечают нарочно — они пускают только российских
+        # пользователей, поэтому их статус облако не трогает; обновляет его полное обслуживание
+        check = [s for s in servers if not (IN_CLOUD and s.get("white"))]
+        for s in check:
             s["ping"] = None
 
         def ping_one(sp):
             sp[0]["ping"] = ping(proxy_opener(sp[1]), 5)
-        for i in range(0, len(servers), 1000):
-            _run_on_tester(_valid_subset(servers[i:i + 1000], xray.CORE_DIR / "tester_check.json"),
+        for i in range(0, len(check), 1000):
+            _run_on_tester(_valid_subset(check[i:i + 1000], xray.CORE_DIR / "tester_check.json"),
                            ping_one, 1000, log)
         (xray.CORE_DIR / "tester_check.json").unlink(missing_ok=True)
         alive = [s for s in servers if s["ping"]]

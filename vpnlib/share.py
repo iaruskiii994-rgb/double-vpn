@@ -44,7 +44,9 @@ def _alive():
     alive = [s for s in servers if s.get("ping")] or servers
     main = [s for s in alive if not s.get("white") and (s.get("ping") or 0) <= SUB_MAX_PING]
     white = sorted((s for s in alive if s.get("white")), key=lambda s: -(s.get("speed") or 0))
-    return sorted(sorted(main, key=collector.rank)[:SUB_MAIN] + white[:SUB_WHITE], key=collector.rank)
+    # сначала серверы поближе к России (ниже пинг у друзей), остальные — если мест хватает
+    main = sorted(main, key=lambda s: (not collector.near(s), collector.rank(s)))[:SUB_MAIN]
+    return sorted(main + white[:SUB_WHITE], key=collector.rank)
 
 
 def display_name(s):
