@@ -1,0 +1,60 @@
+# Автообновление серверов в облаке GitHub — работает 24/7, компьютер не нужен.
+# Каждый час: лёгкая проверка (умершие серверы уходят из подписки, у «⚡ АВТО» перемеряется скорость).
+# Раз в 6 часов: полное обслуживание (перепроверка загрузкой и добор новых серверов).
+# Результат — в той же подписке (Gist) и в servers.json этого репозитория.
+name: Обновление серверов
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Полное обслуживание с добором новых серверов"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ядро Xray (кэш)
+        uses: actions/cache@v4
+        with:
+          path: |
+            core/xray
+            core/geoip.dat
+            core/geosite.dat
+          key: xray-linux-v26
+
+      - name: Проверка серверов и обновление подписки
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          FORCE_FULL: ${{ inputs.full }}
+        run: python collect.py --refresh
+
+      - name: Сохранить свежий список
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Серверы: $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git pull --rebase
+          git push
